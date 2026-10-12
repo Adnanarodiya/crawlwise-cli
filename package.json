@@ -1,6 +1,6 @@
 {
   "name": "crawlwise",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Audit a page for SEO, AI-crawler access and answer-engine readiness from your terminal, CI or coding agent. One command, no install.",
   "type": "module",
   "bin": { "crawlwise": "bin/crawlwise.mjs" },

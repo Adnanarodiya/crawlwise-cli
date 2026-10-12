@@ -289,7 +289,7 @@ function consoleReport(job, { summary }) {
 function upsellBox(teaser) {
   const shown = teaser.topIssues.length;
   const rows = [
-    'FREE AUDIT · ' + shown + ' of ' + teaser.issues + ' issues shown',
+    'FREE AUDIT · ' + shown + ' of ' + teaser.issues + (teaser.issues === 1 ? ' issue shown' : ' issues shown'),
     '',
     'Unlock every fix, the evidence behind it, Core Web',
     'Vitals and an action plan your agent can apply:',
@@ -325,7 +325,7 @@ function teaserConsole(teaser, { summary }) {
   const lines = [
     '',
     bold(teaser.finalUrl) + '  ·  ' + cyan((teaser.score ?? 'not scored') + '/100') + dim(' from ' + teaser.applicable + ' applicable checks'),
-    green(teaser.passed + ' passed') + ' · ' + red(teaser.issues + ' issues') + ' · ' + dim(teaser.unmeasured + ' not measured'),
+    green(teaser.passed + ' passed') + ' · ' + red(teaser.issues + (teaser.issues === 1 ? ' issue' : ' issues')) + ' · ' + dim(teaser.unmeasured + ' not measured'),
   ];
   if (!summary && teaser.topIssues.length) {
     lines.push('', bold('Top issues'));
