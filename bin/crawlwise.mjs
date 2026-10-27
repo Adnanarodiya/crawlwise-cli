@@ -50,7 +50,7 @@ const flag = (name, fallback = '') => flags[name] ?? fallback;
 const has = (name) => name in flags;
 
 const endpoint = (flag('endpoint') || process.env.CRAWLWISE_ENDPOINT || 'https://crawlwise.site').replace(/\/+$/, '');
-const apiKey = flag('api-key') || process.env.CRAWLWISE_API_KEY || '';
+let apiKey = flag('api-key') || process.env.CRAWLWISE_API_KEY || '';
 const format = has('json') ? 'json' : flag('format', 'console');
 const output = flag('output');
 const color = format === 'console' && process.stdout.isTTY && !process.env.NO_COLOR && !has('no-color') && !output;
@@ -97,11 +97,12 @@ Docs: ${endpoint}/agents`);
 }
 
 function fail(message, code = 2) {
+  if (format === 'json') process.stdout.write(JSON.stringify({ error: { message, exit: code } }) + '\n');
   console.error('crawlwise: ' + message);
   process.exit(code);
 }
 
-async function api(route, init = {}) {
+async function api(route, init = {}, opts = {}) {
   let response;
   try {
     response = await fetch(endpoint + route, {
@@ -114,10 +115,12 @@ async function api(route, init = {}) {
       },
     });
   } catch (error) {
-    fail('could not reach ' + endpoint + ' (' + (error?.cause?.code || error?.message || 'network error') + ')');
+    const cause = error?.cause;
+    fail('could not reach ' + endpoint + ' (' + ([cause?.code, cause?.message].filter(Boolean).join(': ') || error?.message || 'network error') + ')');
   }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (opts.planRequired && response.status === 403 && body?.error?.code === 'PLAN_REQUIRED') return { planRequired: true, message: body.error.message };
     const detail = body?.error?.message || body?.error || 'HTTP ' + response.status;
     fail(detail, 2);
   }
@@ -181,7 +184,7 @@ const KIND = {
 function scoreLine(scoring) {
   return scoring?.score === null || scoring?.score === undefined
     ? 'not scored'
-    : scoring.score + '/100 from ' + scoring.applicable + ' applicable checks';
+    : scoring.score + '/100 from the ' + scoring.applicable + ' scored checks';
 }
 
 function markdown(job, { forAgent = false } = {}) {
@@ -310,8 +313,8 @@ function teaserMarkdown(teaser, { forAgent = false } = {}) {
   lines.push(
     '# Crawlwise free audit: ' + teaser.finalUrl,
     '',
-    'Score: ' + (teaser.score ?? 'not scored') + '/100 from ' + teaser.applicable + ' applicable checks',
-    'Passed: ' + teaser.passed + ' · Issues: ' + teaser.issues + ' · Not measured: ' + teaser.unmeasured,
+    'Score: ' + (teaser.score ?? 'not scored') + '/100 from the ' + teaser.applicable + ' scored checks',
+    'Checks passed: ' + teaser.passed + ' · To fix: ' + teaser.issues + ' · Not measured: ' + teaser.unmeasured,
     '',
     '## Top issues (' + teaser.topIssues.length + ' of ' + teaser.issues + ')',
     ...teaser.topIssues.map((issue, i) => i + 1 + '. ' + issue.title + ' [' + issue.impact + '] (check: ' + issue.id + ')'),
@@ -324,8 +327,8 @@ function teaserMarkdown(teaser, { forAgent = false } = {}) {
 function teaserConsole(teaser, { summary }) {
   const lines = [
     '',
-    bold(teaser.finalUrl) + '  ·  ' + cyan((teaser.score ?? 'not scored') + '/100') + dim(' from ' + teaser.applicable + ' applicable checks'),
-    green(teaser.passed + ' passed') + ' · ' + red(teaser.issues + (teaser.issues === 1 ? ' issue' : ' issues')) + ' · ' + dim(teaser.unmeasured + ' not measured'),
+    bold(teaser.finalUrl) + '  ·  ' + cyan((teaser.score ?? 'not scored') + '/100') + dim(' from the ' + teaser.applicable + ' scored checks'),
+    green(teaser.passed + ' checks passed') + ' · ' + red(teaser.issues + ' to fix') + ' · ' + dim(teaser.unmeasured + ' not measured'),
   ];
   if (!summary && teaser.topIssues.length) {
     lines.push('', bold('Top issues'));
@@ -347,7 +350,14 @@ async function audit(url) {
     return freeAudit(url, rules);
   }
 
-  const started = await api('/v1/audits', { method: 'POST', body: JSON.stringify({ url }) });
+  const started = await api('/v1/audits', { method: 'POST', body: JSON.stringify({ url }) }, { planRequired: !baselineId });
+  // A key on a plan without API access still gets the free audit, with a note,
+  // rather than an error for something the free path can do.
+  if (started.planRequired) {
+    process.stderr.write('crawlwise: ' + started.message + ' Running the free audit instead.\n');
+    apiKey = '';
+    return freeAudit(url, rules);
+  }
   process.stderr.write('crawlwise: audit ' + started.id + ' started\n');
   const deadline = Date.now() + 5 * 60_000;
   let job;
@@ -394,6 +404,11 @@ async function audit(url) {
 }
 
 async function freeAudit(url, rules) {
+  // Checked before the request, so the day's one free audit is not spent on
+  // output or a gate the free audit cannot produce.
+  if (format === 'html') fail('--format html needs the full report. Set CRAWLWISE_API_KEY (Pro plan or above): https://crawlwise.site/plans');
+  const unreadable = rules.filter((rule) => rule.kind === 'regression' && rule.level !== 'never' || rule.metric === 'warnings');
+  if (unreadable.length) fail('--fail-on ' + unreadable.map((rule) => rule.text).join(', ') + ' needs the full report (set CRAWLWISE_API_KEY). The free audit can gate on score and fixes.');
   process.stderr.write(dim('crawlwise: free audit (no API key) · 1 page a day · running…') + '\n');
   const teaser = await api('/api/cli/audit', { method: 'POST', body: JSON.stringify({ url }) });
   if (format === 'json') {
@@ -494,6 +509,7 @@ if (command === 'audit') {
   console.log(VERSION);
   process.exit(0);
 } else {
+  if (command) process.stderr.write('crawlwise: unknown command "' + command + '"\n\n');
   usage();
   process.exit(2);
 }
